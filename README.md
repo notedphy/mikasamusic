@@ -19,6 +19,8 @@ USB direct output is provided by the MIT-licensed [Decent USB Audio libraries](h
 
 The Library includes song, artist, album, favorite, and playlist browsing. Lyrics, translations, romaji, and kanji can be entered and saved offline per track; translation and romanization are not generated automatically. The five-band equalizer is available from the DAC tab and is saved on the device. Equalization applies software DSP to both Android and USB output, so bit-perfect playback is available only when all EQ bands are set to 0 dB. The USB path automatically avoids its native direct FLAC engine while EQ is active.
 
+When internet access is available, MikasaMusic searches Deezer's public track catalog using the local song title and artist to show matching album covers, artist photos, and catalog artist/album names. Matches and downloaded artwork are cached on the device; playback remains local. Artwork appears only when a catalog match is available.
+
 The driver and Media3 wrapper are included as local Gradle modules because they are not published to Maven Central. Their upstream `LICENSE` and `NOTICE.md` are kept alongside the vendored source. The optional native FLAC decoder module is included because the USB driver's native build links against it; its bundled FLAC sources retain their upstream notices.
 
 ## Build

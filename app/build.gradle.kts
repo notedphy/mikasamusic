@@ -50,6 +50,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.9.3")
     implementation("androidx.media3:media3-session:1.9.3")
     implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1")
+    implementation("io.coil-kt:coil-compose:2.7.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

@@ -26,6 +26,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -66,7 +67,8 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -94,19 +96,24 @@ import androidx.media3.common.Player
 import com.anothernop.mikasa.library.LibraryRepository
 import com.anothernop.mikasa.library.LocalPlaylist
 import com.anothernop.mikasa.library.LocalTrack
+import com.anothernop.mikasa.library.OnlineTrackMetadata
+import com.anothernop.mikasa.library.OnlineTrackMetadataRepository
 import com.anothernop.mikasa.library.PlaylistStore
 import com.anothernop.mikasa.library.TrackLyrics
 import com.anothernop.mikasa.library.TrackLyricsStore
 import com.anothernop.mikasa.playback.PlaybackEqualizer
 import kotlinx.coroutines.delay
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import org.json.JSONException
 import java.util.UUID
 
-private val Ink = Color(0xFF09070B)
-private val SurfaceColor = Color(0xFF17131A)
-private val SurfaceRaised = Color(0xFF211A23)
-private val Accent = Color(0xFFFF6685)
-private val Muted = Color(0xFFAAA1AE)
+private val Ink = Color(0xFFFAF9F7)
+private val SurfaceColor = Color(0xFFFFFFFF)
+private val SurfaceRaised = Color(0xFFFFFFFF)
+private val Accent = Color(0xFFE54862)
+private val Muted = Color(0xFF77747A)
+private val TextPrimary = Color(0xFF211F23)
 
 private enum class MainTab(val label: String) {
     Listen("Listen"),
@@ -127,7 +134,8 @@ private data class LibraryGroup(
     val key: String,
     val title: String,
     val detail: String,
-    val tracks: List<LocalTrack>
+    val tracks: List<LocalTrack>,
+    val artistArtwork: Boolean = false
 )
 
 private data class PlayerSnapshot(
@@ -254,14 +262,14 @@ fun MikasaApp(
     }
 
     MaterialTheme(
-        colorScheme = darkColorScheme(
+        colorScheme = lightColorScheme(
             primary = Accent,
-            onPrimary = Ink,
-            secondary = Color(0xFFD8B8E3),
+            onPrimary = Color.White,
+            secondary = Color(0xFF8F536C),
             background = Ink,
             surface = SurfaceColor,
-            onBackground = Color.White,
-            onSurface = Color.White
+            onBackground = TextPrimary,
+            onSurface = TextPrimary
         )
     ) {
         Scaffold(
@@ -275,7 +283,10 @@ fun MikasaApp(
                             onExpand = { showNowPlaying = true }
                         )
                     }
-                    NavigationBar(containerColor = SurfaceColor) {
+                    NavigationBar(
+                        containerColor = SurfaceColor,
+                        tonalElevation = 8.dp
+                    ) {
                         MainTab.entries.forEach { tab ->
                             val icon = when (tab) {
                                 MainTab.Listen -> Icons.Filled.Home
@@ -293,7 +304,14 @@ fun MikasaApp(
                                     }
                                 },
                                 icon = { Icon(icon, contentDescription = tab.label) },
-                                label = { Text(tab.label) }
+                                label = { Text(tab.label) },
+                                colors = androidx.compose.material3.NavigationBarItemDefaults.colors(
+                                    selectedIconColor = Accent,
+                                    selectedTextColor = Accent,
+                                    indicatorColor = Accent.copy(alpha = 0.12f),
+                                    unselectedIconColor = Muted,
+                                    unselectedTextColor = Muted
+                                )
                             )
                         }
                     }
@@ -319,7 +337,7 @@ fun MikasaApp(
                 }
 
                 when (selectedTab) {
-                    MainTab.Listen -> HomeScreen(
+                    MainTab.Listen -> ListenNowScreen(
                         tracks = tracks,
                         favorites = favorites,
                         hasAudioPermission = hasAudioPermission,
@@ -531,6 +549,332 @@ private fun HomeScreen(
 }
 
 @Composable
+private fun ListenNowScreen(
+    tracks: List<LocalTrack>,
+    favorites: Set<Long>,
+    hasAudioPermission: Boolean,
+    loading: Boolean,
+    onGrantAccess: () -> Unit,
+    onRefresh: () -> Unit,
+    onPlay: (LocalTrack) -> Unit,
+    onFavorite: (Long) -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(22.dp)
+    ) {
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 22.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "MIKASA MUSIC",
+                        color = Accent,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.4.sp
+                    )
+                    Text(
+                        "Listen Now",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary
+                    )
+                    Text(
+                        "Local music · artwork when online",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Muted
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(Brush.linearGradient(listOf(Accent, Color(0xFFF3A17D)))),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("M", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        if (!hasAudioPermission) {
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = SurfaceRaised),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(22.dp)
+                    ) {
+                        Text(
+                            "Your music, all in one place",
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Allow access to browse and play songs stored on this device.",
+                            color = Muted
+                        )
+                        Spacer(Modifier.height(14.dp))
+                        Button(onClick = onGrantAccess) { Text("Allow music access") }
+                    }
+                }
+            }
+        } else if (tracks.isEmpty()) {
+            item {
+                EmptyState(
+                    title = if (loading) "Finding your music..." else "Your library is ready",
+                    detail = if (loading) "Your on-device songs will appear here."
+                    else "Add audio files to your device, then scan your library.",
+                    actionLabel = if (loading) null else "Scan library",
+                    onAction = if (loading) null else onRefresh
+                )
+            }
+        } else {
+            item {
+                HomeSectionHeading(
+                    title = "Top Picks",
+                    detail = "${tracks.size} songs in your library",
+                    modifier = Modifier.padding(horizontal = 22.dp)
+                )
+            }
+            item {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    items(tracks.take(10), key = { it.id }) { track ->
+                        FeaturedTrackCard(
+                            track = track,
+                            isFavorite = track.id in favorites,
+                            onClick = { onPlay(track) },
+                            onFavorite = { onFavorite(track.id) }
+                        )
+                    }
+                }
+            }
+            item {
+                HomeSectionHeading(
+                    title = "Quick Picks",
+                    detail = "From your library",
+                    modifier = Modifier.padding(horizontal = 22.dp)
+                )
+            }
+            item {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    items(tracks.take(12), key = { "recent-${it.id}" }) { track ->
+                        RecentTrackCard(track = track, onClick = { onPlay(track) })
+                    }
+                }
+            }
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 22.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    HomeSectionHeading(
+                        title = "Your Songs",
+                        detail = "${tracks.size} tracks",
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = onRefresh, enabled = !loading) {
+                        Icon(Icons.Outlined.Refresh, contentDescription = null)
+                        Spacer(Modifier.width(4.dp))
+                        Text(if (loading) "Scanning" else "Scan")
+                    }
+                }
+            }
+            items(tracks.take(8), key = { "song-${it.id}" }) { track ->
+                Box(Modifier.padding(horizontal = 20.dp)) {
+                    TrackRow(
+                        track = track,
+                        isFavorite = track.id in favorites,
+                        onPlay = { onPlay(track) },
+                        onFavorite = { onFavorite(track.id) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeSectionHeading(
+    title: String,
+    detail: String,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Bottom
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = TextPrimary
+        )
+        Spacer(Modifier.weight(1f))
+        Text(detail, color = Muted, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable
+private fun FeaturedTrackCard(
+    track: LocalTrack,
+    isFavorite: Boolean,
+    onClick: () -> Unit,
+    onFavorite: () -> Unit
+) {
+    val palette = coverPalette(track.id)
+    val metadata = rememberOnlineTrackMetadata(track)
+    Box(
+        modifier = Modifier
+            .width(258.dp)
+            .height(292.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(Brush.linearGradient(palette))
+            .clickable(onClick = onClick)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(188.dp)
+                .align(Alignment.TopEnd)
+                .padding(top = 22.dp, end = 18.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.13f))
+        )
+        Box(
+            modifier = Modifier
+                .size(130.dp)
+                .align(Alignment.TopEnd)
+                .padding(top = 50.dp, end = 48.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Outlined.Album,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.92f),
+                modifier = Modifier.size(58.dp)
+            )
+        }
+        metadata?.albumArtUrl?.let { artworkUrl ->
+            RemoteArtworkImage(artworkUrl, "Album art for ${track.title}", Modifier.fillMaxSize())
+        }
+        IconButton(
+            onClick = onFavorite,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(8.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.16f))
+        ) {
+            Icon(
+                if (isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                contentDescription = if (isFavorite) "Remove favorite" else "Add favorite",
+                tint = Color.White
+            )
+        }
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.65f))
+                    )
+                )
+                .padding(start = 18.dp, end = 18.dp, top = 46.dp, bottom = 18.dp)
+        ) {
+            Text(
+                "FROM YOUR LIBRARY",
+                color = Color.White.copy(alpha = 0.78f),
+                style = MaterialTheme.typography.labelSmall,
+                letterSpacing = 1.1.sp
+            )
+            Spacer(Modifier.height(5.dp))
+            Text(
+                track.title,
+                color = Color.White,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                metadata?.artist?.takeIf(String::isNotBlank) ?: track.artist,
+                color = Color.White.copy(alpha = 0.85f),
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            metadata?.album?.takeIf(String::isNotBlank)?.let { album ->
+                Text(
+                    album,
+                    color = Color.White.copy(alpha = 0.75f),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecentTrackCard(track: LocalTrack, onClick: () -> Unit) {
+    val metadata = rememberOnlineTrackMetadata(track)
+    Column(
+        modifier = Modifier
+            .width(132.dp)
+            .clickable(onClick = onClick)
+    ) {
+        AlbumTile(track, 132.dp)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            track.title,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            metadata?.artist?.takeIf(String::isNotBlank) ?: track.artist,
+            color = Muted,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+private fun coverPalette(id: Long): List<Color> = when (Math.floorMod(id, 5L).toInt()) {
+    0 -> listOf(Color(0xFFFB9D42), Color(0xFFEB5D40), Color(0xFF783D53))
+    1 -> listOf(Color(0xFF3B93A1), Color(0xFF286176), Color(0xFF202C51))
+    2 -> listOf(Color(0xFFD66E8B), Color(0xFF914D7E), Color(0xFF49396A))
+    3 -> listOf(Color(0xFF9BB14A), Color(0xFF398A72), Color(0xFF245665))
+    else -> listOf(Color(0xFFF1B644), Color(0xFFE78348), Color(0xFFAD4C60))
+}
+
+@Composable
 private fun SearchScreen(
     query: String,
     onQueryChange: (String) -> Unit,
@@ -666,7 +1010,13 @@ private fun LibraryScreen(
                     val groups = tracks.groupBy { it.artist }
                         .toSortedMap(String.CASE_INSENSITIVE_ORDER)
                         .map { (artist, songs) ->
-                            LibraryGroup(artist, artist, "${songs.size} songs", songs)
+                            LibraryGroup(
+                                artist,
+                                artist,
+                                "${songs.size} songs",
+                                songs,
+                                artistArtwork = true
+                            )
                         }
                     LibraryGroupsScreen(
                         groups = groups,
@@ -833,7 +1183,7 @@ private fun LibraryGroupRow(group: LibraryGroup, onClick: () -> Unit) {
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        AlbumTile(group.tracks.first(), 52.dp)
+        AlbumTile(group.tracks.first(), 52.dp, artistArtwork = group.artistArtwork)
         Spacer(Modifier.width(12.dp))
         Column {
             Text(group.title, fontWeight = FontWeight.SemiBold)
@@ -1039,6 +1389,7 @@ private fun TrackRow(
     onFavorite: () -> Unit,
     onAddToPlaylist: (() -> Unit)? = null
 ) {
+    val metadata = rememberOnlineTrackMetadata(track)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1056,7 +1407,8 @@ private fun TrackRow(
                 fontWeight = FontWeight.Medium
             )
             Text(
-                "${track.artist}  ·  ${track.album}",
+                "${metadata?.artist?.takeIf(String::isNotBlank) ?: track.artist}  ·  " +
+                    (metadata?.album?.takeIf(String::isNotBlank) ?: track.album),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 color = Muted,
@@ -1115,13 +1467,19 @@ private fun PlaylistRow(
 }
 
 @Composable
-private fun AlbumTile(track: LocalTrack, size: androidx.compose.ui.unit.Dp) {
+private fun AlbumTile(
+    track: LocalTrack,
+    size: androidx.compose.ui.unit.Dp,
+    artistArtwork: Boolean = false
+) {
     val colors = when ((track.id % 4).toInt()) {
         0 -> listOf(Color(0xFF713953), Color(0xFFE18892))
         1 -> listOf(Color(0xFF244C5B), Color(0xFF8AC1B7))
         2 -> listOf(Color(0xFF59436E), Color(0xFFD68B9E))
         else -> listOf(Color(0xFF6D482C), Color(0xFFE3AE69))
     }
+    val metadata = rememberOnlineTrackMetadata(track)
+    val imageUrl = if (artistArtwork) metadata?.artistImageUrl else metadata?.albumArtUrl
     Box(
         modifier = Modifier
             .size(size)
@@ -1135,7 +1493,38 @@ private fun AlbumTile(track: LocalTrack, size: androidx.compose.ui.unit.Dp) {
             tint = Color.White.copy(alpha = 0.9f),
             modifier = Modifier.size(size * 0.42f)
         )
+        if (imageUrl != null) {
+            RemoteArtworkImage(
+                imageUrl,
+                if (artistArtwork) "Artist photo for ${track.artist}" else "Album art for ${track.title}",
+                Modifier.fillMaxSize()
+            )
+        }
     }
+}
+
+@Composable
+private fun rememberOnlineTrackMetadata(track: LocalTrack): OnlineTrackMetadata? {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var metadata by remember(track.id) { mutableStateOf<OnlineTrackMetadata?>(null) }
+    LaunchedEffect(track.id, track.title, track.artist) {
+        metadata = OnlineTrackMetadataRepository.find(context, track)
+    }
+    return metadata
+}
+
+@Composable
+private fun RemoteArtworkImage(url: String, description: String, modifier: Modifier) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    AsyncImage(
+        model = ImageRequest.Builder(context)
+            .data(url)
+            .crossfade(true)
+            .build(),
+        contentDescription = description,
+        contentScale = ContentScale.Crop,
+        modifier = modifier
+    )
 }
 
 @Composable
@@ -1149,7 +1538,7 @@ private fun BrandHeader(subtitle: String) {
                     .background(Accent),
                 contentAlignment = Alignment.Center
             ) {
-                Text("M", color = Ink, fontWeight = FontWeight.Black, fontSize = 20.sp)
+                Text("M", color = Color.White, fontWeight = FontWeight.Black, fontSize = 20.sp)
             }
             Spacer(Modifier.width(10.dp))
             Text(
@@ -1204,11 +1593,11 @@ private fun EmptyState(
 private fun ErrorBanner(message: String) {
     Text(
         message,
-        color = Color(0xFFFFA6B7),
+        color = Color(0xFF9D243A),
         style = MaterialTheme.typography.bodySmall,
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF321923))
+            .background(Color(0xFFFFE9ED))
             .padding(horizontal = 16.dp, vertical = 10.dp)
     )
 }
@@ -1293,51 +1682,82 @@ private fun MiniPlayer(
     snapshot: PlayerSnapshot,
     onExpand: () -> Unit
 ) {
-    Row(
+    val progress = if (snapshot.durationMs > 0) {
+        (snapshot.positionMs.toFloat() / snapshot.durationMs).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(SurfaceRaised)
+            .padding(horizontal = 12.dp, vertical = 5.dp)
             .clickable(onClick = onExpand)
-            .padding(start = 10.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .clip(RoundedCornerShape(16.dp)),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceRaised),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
     ) {
-        AlbumTile(
-            LocalTrack(
-                id = player?.currentMediaItem?.mediaId?.toLongOrNull() ?: 0L,
-                title = snapshot.title,
-                artist = snapshot.artist,
-                album = "",
-                durationMs = snapshot.durationMs,
-                uri = android.net.Uri.EMPTY
-            ),
-            42.dp
-        )
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
-            Text(snapshot.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                snapshot.artist,
-                color = Muted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-        IconButton(onClick = { player?.seekToPreviousMediaItem() }) {
-            Icon(Icons.Outlined.SkipPrevious, contentDescription = "Previous")
-        }
-        IconButton(onClick = {
-            if (snapshot.isPlaying) player?.pause() else player?.play()
-        }) {
-            Icon(
-                if (snapshot.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                contentDescription = if (snapshot.isPlaying) "Pause" else "Play"
-            )
-        }
-        IconButton(onClick = { player?.seekToNextMediaItem() }) {
-            Icon(Icons.Outlined.SkipNext, contentDescription = "Next")
+        Column {
+            Row(
+                modifier = Modifier.padding(start = 9.dp, end = 4.dp, top = 7.dp, bottom = 5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                AlbumTile(
+                    LocalTrack(
+                        id = player?.currentMediaItem?.mediaId?.toLongOrNull() ?: 0L,
+                        title = snapshot.title,
+                        artist = snapshot.artist,
+                        album = "",
+                        durationMs = snapshot.durationMs,
+                        uri = android.net.Uri.EMPTY
+                    ),
+                    42.dp
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        snapshot.title,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        snapshot.artist,
+                        color = Muted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                IconButton(onClick = { player?.seekToPreviousMediaItem() }) {
+                    Icon(Icons.Outlined.SkipPrevious, contentDescription = "Previous")
+                }
+                IconButton(onClick = {
+                    if (snapshot.isPlaying) player?.pause() else player?.play()
+                }) {
+                    Icon(
+                        if (snapshot.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = if (snapshot.isPlaying) "Pause" else "Play",
+                        tint = Accent
+                    )
+                }
+                IconButton(onClick = { player?.seekToNextMediaItem() }) {
+                    Icon(Icons.Outlined.SkipNext, contentDescription = "Next")
+                }
+            }
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(2.dp)
+                    .background(Color(0xFFEDE9E9))
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(progress)
+                        .height(2.dp)
+                        .background(Accent)
+                )
+            }
         }
     }
 }
@@ -1425,7 +1845,7 @@ private fun NowPlayingDialog(
                         Icon(
                             if (snapshot.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                             contentDescription = if (snapshot.isPlaying) "Pause" else "Play",
-                            tint = Ink,
+                            tint = Color.White,
                             modifier = Modifier.size(32.dp)
                         )
                     }
