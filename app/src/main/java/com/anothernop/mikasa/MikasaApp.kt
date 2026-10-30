@@ -18,9 +18,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -91,6 +95,9 @@ import com.anothernop.mikasa.library.LibraryRepository
 import com.anothernop.mikasa.library.LocalPlaylist
 import com.anothernop.mikasa.library.LocalTrack
 import com.anothernop.mikasa.library.PlaylistStore
+import com.anothernop.mikasa.library.TrackLyrics
+import com.anothernop.mikasa.library.TrackLyricsStore
+import com.anothernop.mikasa.playback.PlaybackEqualizer
 import kotlinx.coroutines.delay
 import org.json.JSONException
 import java.util.UUID
@@ -110,9 +117,18 @@ private enum class MainTab(val label: String) {
 
 private enum class LibraryMode(val label: String) {
     Songs("Songs"),
+    Artists("Artists"),
+    Albums("Albums"),
     Favorites("Favorites"),
     Playlists("Playlists")
 }
+
+private data class LibraryGroup(
+    val key: String,
+    val title: String,
+    val detail: String,
+    val tracks: List<LocalTrack>
+)
 
 private data class PlayerSnapshot(
     val title: String,
@@ -160,9 +176,11 @@ fun MikasaApp(
     var selectedTab by rememberSaveable { mutableStateOf(MainTab.Listen) }
     var libraryMode by rememberSaveable { mutableStateOf(LibraryMode.Songs) }
     var selectedPlaylistId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedLibraryGroup by rememberSaveable { mutableStateOf<String?>(null) }
     var showCreatePlaylist by remember { mutableStateOf(false) }
     var trackToAdd by remember { mutableStateOf<LocalTrack?>(null) }
     var showNowPlaying by remember { mutableStateOf(false) }
+    var lyricsError by remember { mutableStateOf<String?>(null) }
     val playlistLoadResult = remember { PlaylistStore.load(context) }
     var playlistError by remember { mutableStateOf(playlistLoadResult.errorMessage) }
     var playlists by remember { mutableStateOf(playlistLoadResult.playlists) }
@@ -271,6 +289,7 @@ fun MikasaApp(
                                     selectedTab = tab
                                     if (tab != MainTab.Library) {
                                         selectedPlaylistId = null
+                                        selectedLibraryGroup = null
                                     }
                                 },
                                 icon = { Icon(icon, contentDescription = tab.label) },
@@ -294,6 +313,9 @@ fun MikasaApp(
                 }
                 if (playlistError != null) {
                     ErrorBanner(playlistError!!)
+                }
+                if (lyricsError != null) {
+                    ErrorBanner(lyricsError!!)
                 }
 
                 when (selectedTab) {
@@ -330,7 +352,10 @@ fun MikasaApp(
                         onModeChange = {
                             libraryMode = it
                             selectedPlaylistId = null
+                            selectedLibraryGroup = null
                         },
+                        selectedGroupKey = selectedLibraryGroup,
+                        onSelectGroup = { selectedLibraryGroup = it },
                         selectedPlaylistId = selectedPlaylistId,
                         onSelectPlaylist = { selectedPlaylistId = it },
                         onCreatePlaylist = { showCreatePlaylist = true },
@@ -384,9 +409,35 @@ fun MikasaApp(
     }
 
     if (showNowPlaying) {
+        val currentTrackId = player?.currentMediaItem?.mediaId?.toLongOrNull()
+        var currentLyrics by remember(currentTrackId) { mutableStateOf(TrackLyrics()) }
+        LaunchedEffect(currentTrackId) {
+            lyricsError = null
+            if (currentTrackId != null) {
+                try {
+                    currentLyrics = TrackLyricsStore.load(context, currentTrackId)
+                } catch (error: JSONException) {
+                    lyricsError = "Could not read saved lyrics: ${error.message}"
+                }
+            } else {
+                currentLyrics = TrackLyrics()
+            }
+        }
         NowPlayingDialog(
             player = player,
             snapshot = snapshot,
+            lyrics = currentLyrics,
+            onSaveLyrics = { updated ->
+                if (currentTrackId != null) {
+                    try {
+                        TrackLyricsStore.save(context, currentTrackId, updated)
+                        currentLyrics = updated
+                        lyricsError = null
+                    } catch (error: JSONException) {
+                        lyricsError = "Could not save lyrics: ${error.message}"
+                    }
+                }
+            },
             onDismiss = { showNowPlaying = false }
         )
     }
@@ -552,6 +603,8 @@ private fun LibraryScreen(
     loading: Boolean,
     mode: LibraryMode,
     onModeChange: (LibraryMode) -> Unit,
+    selectedGroupKey: String?,
+    onSelectGroup: (String?) -> Unit,
     selectedPlaylistId: String?,
     onSelectPlaylist: (String?) -> Unit,
     onCreatePlaylist: () -> Unit,
@@ -568,17 +621,23 @@ private fun LibraryScreen(
     ) {
         BrandHeader("Everything you keep close.")
         Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(bottom = 12.dp)
         ) {
-            LibraryMode.entries.forEach { item ->
-                FilterChip(
-                    selected = item == mode,
-                    onClick = { onModeChange(item) },
-                    label = { Text(item.label) }
-                )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState())
+            ) {
+                LibraryMode.entries.forEach { item ->
+                    FilterChip(
+                        selected = item == mode,
+                        onClick = { onModeChange(item) },
+                        label = { Text(item.label) }
+                    )
+                }
             }
-            Spacer(Modifier.weight(1f))
             IconButton(onClick = onRefresh, enabled = !loading && hasAudioPermission) {
                 Icon(Icons.Outlined.Refresh, contentDescription = "Scan library")
             }
@@ -602,6 +661,53 @@ private fun LibraryScreen(
                     onFavorite = onFavorite,
                     onAddToPlaylist = onAddToPlaylist
                 )
+
+                LibraryMode.Artists -> {
+                    val groups = tracks.groupBy { it.artist }
+                        .toSortedMap(String.CASE_INSENSITIVE_ORDER)
+                        .map { (artist, songs) ->
+                            LibraryGroup(artist, artist, "${songs.size} songs", songs)
+                        }
+                    LibraryGroupsScreen(
+                        groups = groups,
+                        selectedKey = selectedGroupKey,
+                        onSelectGroup = onSelectGroup,
+                        favorites = favorites,
+                        onPlay = { queue, start -> onPlay(queue, start) },
+                        onFavorite = onFavorite,
+                        onAddToPlaylist = onAddToPlaylist,
+                        emptyTitle = "No artists yet"
+                    )
+                }
+
+                LibraryMode.Albums -> {
+                    val groups = tracks.groupBy { it.album to it.artist }
+                        .entries
+                        .sortedWith(
+                            compareBy<Map.Entry<Pair<String, String>, List<LocalTrack>>> {
+                                it.key.first.lowercase()
+                            }.thenBy { it.key.second.lowercase() }
+                        )
+                        .map { (key, songs) ->
+                            val albumKey = "${key.first}\u0000${key.second}"
+                            LibraryGroup(
+                                albumKey,
+                                key.first,
+                                "${key.second} · ${songs.size} songs",
+                                songs
+                            )
+                        }
+                    LibraryGroupsScreen(
+                        groups = groups,
+                        selectedKey = selectedGroupKey,
+                        onSelectGroup = onSelectGroup,
+                        favorites = favorites,
+                        onPlay = { queue, start -> onPlay(queue, start) },
+                        onFavorite = onFavorite,
+                        onAddToPlaylist = onAddToPlaylist,
+                        emptyTitle = "No albums yet"
+                    )
+                }
 
                 LibraryMode.Favorites -> {
                     val favoriteTracks = tracks.filter { it.id in favorites }
@@ -676,9 +782,73 @@ private fun LibraryScreen(
 }
 
 @Composable
+private fun LibraryGroupsScreen(
+    groups: List<LibraryGroup>,
+    selectedKey: String?,
+    onSelectGroup: (String?) -> Unit,
+    favorites: Set<Long>,
+    onPlay: (List<LocalTrack>, LocalTrack) -> Unit,
+    onFavorite: (Long) -> Unit,
+    onAddToPlaylist: (LocalTrack) -> Unit,
+    emptyTitle: String
+) {
+    val selected = groups.find { it.key == selectedKey }
+    if (selected != null) {
+        Column(Modifier.fillMaxSize()) {
+            TextButton(onClick = { onSelectGroup(null) }) { Text("Back") }
+            SectionTitle(selected.title, selected.detail)
+            TrackList(
+                tracks = selected.tracks,
+                favorites = favorites,
+                emptyTitle = "No songs in this collection",
+                emptyDetail = "This collection has no playable songs.",
+                onPlay = { onPlay(selected.tracks, it) },
+                onFavorite = onFavorite,
+                onAddToPlaylist = onAddToPlaylist
+            )
+        }
+    } else if (groups.isEmpty()) {
+        EmptyState(emptyTitle, "Scan your local music library to browse this collection.")
+    } else {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(bottom = 20.dp)
+        ) {
+            items(groups, key = { it.key }) { group ->
+                LibraryGroupRow(group, onClick = { onSelectGroup(group.key) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryGroupRow(group: LibraryGroup, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(SurfaceColor)
+            .clickable(onClick = onClick)
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        AlbumTile(group.tracks.first(), 52.dp)
+        Spacer(Modifier.width(12.dp))
+        Column {
+            Text(group.title, fontWeight = FontWeight.SemiBold)
+            Text(group.detail, color = Muted, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
 private fun DacScreen() {
     val context = androidx.compose.ui.platform.LocalContext.current
     var devices by remember { mutableStateOf(findUsbDacs(context)) }
+    var equalizerGains by remember {
+        mutableStateOf(PlaybackEqualizer.load(context).toList())
+    }
     LaunchedEffect(Unit) {
         while (true) {
             devices = findUsbDacs(context)
@@ -718,7 +888,68 @@ private fun DacScreen() {
                         color = Muted
                     )
                     Spacer(Modifier.height(14.dp))
-                    Text("No EQ or software volume is applied to the direct USB path.", color = Muted)
+                    Text(
+                        "EQ is off by default. Enabling it processes audio in software and disables bit-perfect output.",
+                        color = Muted
+                    )
+                }
+            }
+        }
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = SurfaceRaised),
+                shape = RoundedCornerShape(24.dp)
+            ) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp)
+                ) {
+                    Text("Equalizer", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "Five-band EQ · changes are saved on this device",
+                        color = Muted,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    PlaybackEqualizer.frequenciesHz.forEachIndexed { index, frequency ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                if (frequency >= 1_000) "${frequency / 1_000} kHz" else "$frequency Hz",
+                                modifier = Modifier.width(58.dp),
+                                color = Muted,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                            Slider(
+                                value = equalizerGains[index],
+                                onValueChange = { value ->
+                                    PlaybackEqualizer.setGain(context, index, value)
+                                    equalizerGains = equalizerGains.toMutableList()
+                                        .also { it[index] = value }
+                                },
+                                valueRange = -12f..12f,
+                                steps = 47,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                "${equalizerGains[index].toInt()} dB",
+                                modifier = Modifier.width(42.dp),
+                                color = Muted,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+                    TextButton(
+                        onClick = {
+                            PlaybackEqualizer.frequenciesHz.indices.forEach {
+                                PlaybackEqualizer.setGain(context, it, 0f)
+                            }
+                            equalizerGains = List(PlaybackEqualizer.frequenciesHz.size) { 0f }
+                        },
+                        modifier = Modifier.align(Alignment.End)
+                    ) {
+                        Text("Reset EQ")
+                    }
                 }
             }
         }
@@ -1115,8 +1346,11 @@ private fun MiniPlayer(
 private fun NowPlayingDialog(
     player: Player?,
     snapshot: PlayerSnapshot,
+    lyrics: TrackLyrics,
+    onSaveLyrics: (TrackLyrics) -> Unit,
     onDismiss: () -> Unit
 ) {
+    var showLyricsEditor by remember { mutableStateOf(false) }
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(28.dp),
@@ -1214,9 +1448,99 @@ private fun NowPlayingDialog(
                         )
                     }
                 }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { showLyricsEditor = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Lyrics · translation · romaji · kanji")
+                }
             }
         }
     }
+    if (showLyricsEditor) {
+        LyricsEditorDialog(
+            title = snapshot.title,
+            lyrics = lyrics,
+            onDismiss = { showLyricsEditor = false },
+            onSave = {
+                onSaveLyrics(it)
+                showLyricsEditor = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun LyricsEditorDialog(
+    title: String,
+    lyrics: TrackLyrics,
+    onDismiss: () -> Unit,
+    onSave: (TrackLyrics) -> Unit
+) {
+    var original by remember(lyrics) { mutableStateOf(lyrics.lyrics) }
+    var translation by remember(lyrics) { mutableStateOf(lyrics.translation) }
+    var romaji by remember(lyrics) { mutableStateOf(lyrics.romaji) }
+    var kanji by remember(lyrics) { mutableStateOf(lyrics.kanji) }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(24.dp), color = SurfaceRaised) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 620.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("Lyrics for $title", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "Enter or paste these offline. Translation and romanization are not generated automatically.",
+                    color = Muted,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                LyricsTextField("Original lyrics", original) { original = it }
+                LyricsTextField("Translation", translation) { translation = it }
+                LyricsTextField("Romaji", romaji) { romaji = it }
+                LyricsTextField("Kanji", kanji) { kanji = it }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    TextButton(
+                        onClick = {
+                            onSave(
+                                TrackLyrics(
+                                    lyrics = original,
+                                    translation = translation,
+                                    romaji = romaji,
+                                    kanji = kanji
+                                )
+                            )
+                        }
+                    ) {
+                        Text("Save offline")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LyricsTextField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        modifier = Modifier.fillMaxWidth(),
+        minLines = 3,
+        maxLines = 6
+    )
 }
 
 @Composable

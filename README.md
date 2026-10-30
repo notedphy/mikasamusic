@@ -15,7 +15,9 @@ Open this directory in Android Studio and sync the Gradle project. The app ID is
 
 The app scans the device's local audio library after the user grants audio access. It does not request network access or provide music streaming.
 
-USB direct output is provided by the MIT-licensed [Decent USB Audio libraries](https://github.com/Ma145/decent-player), pinned in `third_party/decent-player`. Its native decoder uses Xiph FLAC 1.5.0, pinned in the same directory. The current driver targets USB Audio Class 2.0 DACs on Android 10+. Output capability, sample-rate support, and bit-perfect operation depend on the connected DAC and device. Without a compatible DAC, playback uses Android's standard audio output. The app does not apply an EQ or software volume adjustment to the direct USB path.
+USB direct output is provided by the MIT-licensed [Decent USB Audio libraries](https://github.com/Ma145/decent-player), pinned in `third_party/decent-player`. Its native decoder uses Xiph FLAC 1.5.0, pinned in the same directory. The current driver targets USB Audio Class 2.0 DACs on Android 10+. Output capability, sample-rate support, and bit-perfect operation depend on the connected DAC and device. Without a compatible DAC, playback uses Android's standard audio output.
+
+The Library includes song, artist, album, favorite, and playlist browsing. Lyrics, translations, romaji, and kanji can be entered and saved offline per track; translation and romanization are not generated automatically. The five-band equalizer is available from the DAC tab and is saved on the device. Equalization applies software DSP to both Android and USB output, so bit-perfect playback is available only when all EQ bands are set to 0 dB. The USB path automatically avoids its native direct FLAC engine while EQ is active.
 
 The driver and Media3 wrapper are included as local Gradle modules because they are not published to Maven Central. Their upstream `LICENSE` and `NOTICE.md` are kept alongside the vendored source. The optional native FLAC decoder module is included because the USB driver's native build links against it; its bundled FLAC sources retain their upstream notices.
 

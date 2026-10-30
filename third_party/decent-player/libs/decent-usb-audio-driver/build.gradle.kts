@@ -9,7 +9,12 @@ android {
 
     defaultConfig {
         minSdk = 29
-        externalNativeBuild { cmake { cppFlags("") } }
+        externalNativeBuild {
+            cmake {
+                cppFlags("")
+                arguments += "-DHAVE_FSEEKO=ON"
+            }
+        }
     }
 
     ndkVersion = "29.0.14206865"

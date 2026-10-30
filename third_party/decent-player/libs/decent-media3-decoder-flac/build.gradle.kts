@@ -10,7 +10,11 @@ android {
         minSdk = 29
         externalNativeBuild {
             cmake {
-                arguments += listOf("-DWITH_OGG=OFF", "-DINSTALL_MANPAGES=OFF")
+                arguments += listOf(
+                    "-DHAVE_FSEEKO=ON",
+                    "-DWITH_OGG=OFF",
+                    "-DINSTALL_MANPAGES=OFF"
+                )
                 targets += "flacJNI"
             }
         }

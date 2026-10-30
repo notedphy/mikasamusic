@@ -123,6 +123,8 @@ class UsbAudioSink(
     private val engineLock = Any()
 
     private var currentEncoding: Int = C.ENCODING_PCM_16BIT
+    private val equalizer = UsbPcmEqualizer()
+    @Volatile private var equalizerReconfigurePending = false
     private var currentSampleRate: Int = 0
     private var currentChannelCount: Int = 0
     private var pendingVolume: Float = 1f
@@ -240,7 +242,22 @@ class UsbAudioSink(
         presentationTimeUs: Long,
         encodedAccessUnitCount: Int
     ): Boolean {
-        val stream = usbAudioStream
+        var stream = usbAudioStream
+        if (config.bitPerfectEnabled && stream?.isAlive == true) {
+            if (equalizerReconfigurePending) {
+                equalizerReconfigurePending = false
+                val sampleRate = currentSampleRate
+                val channelCount = currentChannelCount
+                val encoding = currentEncoding
+                releaseUsbStream()
+                if (sampleRate > 0 && channelCount > 0) {
+                    configureUsbBitPerfect(sampleRate, channelCount, encoding)
+                    if (config.forceRouteToSpeaker) forceMediaToSpeaker()
+                    muteDelegateIfNeeded()
+                }
+                stream = usbAudioStream
+            }
+        }
         if (config.bitPerfectEnabled && stream?.isAlive == true) {
             muteDelegateIfNeeded()
 
@@ -318,7 +335,16 @@ class UsbAudioSink(
             handleBufferCallCount++
             val snapshot: ByteBuffer = buffer.slice().order(buffer.order())
 
-            if (currentEncoding == C.ENCODING_PCM_FLOAT) {
+            if (equalizer.isEnabled) {
+                val bytesPerSample = PcmUtils.bytesPerSample(currentEncoding)
+                val sampleCount = snapshot.remaining() / bytesPerSample
+                if (sampleCount > 0) {
+                    val samples = FloatArray(sampleCount)
+                    repeat(sampleCount) { samples[it] = PcmUtils.readFloat(snapshot, currentEncoding) }
+                    equalizer.process(samples, currentSampleRate, currentChannelCount)
+                    thread.enqueue(samples)
+                }
+            } else if (currentEncoding == C.ENCODING_PCM_FLOAT) {
                 val totalSamples = snapshot.remaining() / 4
                 if (totalSamples > 0) {
                     val floatBuf = FloatArray(totalSamples)
@@ -618,7 +644,7 @@ class UsbAudioSink(
         usbStreamingThread = null
 
         val path = currentTrackPath
-        if (path != null && path.lowercase().endsWith(".flac")) {
+        if (!equalizer.isEnabled && path != null && path.lowercase().endsWith(".flac")) {
             val engine = NativeAudioEngine()
             try {
                 val fd = android.os.ParcelFileDescriptor.open(
@@ -769,6 +795,18 @@ class UsbAudioSink(
      *  restored position, not at 0). */
     @Volatile
     private var initialPlayerPositionUs: Long = 0L
+
+    fun setEqualizerGainsDb(gains: FloatArray) {
+        val wasEnabled = equalizer.isEnabled
+        equalizer.setGainsDb(gains)
+        val isEnabled = equalizer.isEnabled
+        if (wasEnabled == isEnabled || usbAudioStream?.isAlive != true) return
+
+        initialPlayerPositionUs = (attachedPlayer?.currentPosition ?: 0L) * 1_000L
+        equalizerReconfigurePending = true
+        attachedPlayer?.seekTo((initialPlayerPositionUs / 1_000L).coerceAtLeast(0L))
+        Log.i(TAG, "USB equalizer ${if (isEnabled) "enabled" else "disabled"}; reconfiguring output")
+    }
 
     private inner class PlayerIntegrationListener : Player.Listener {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
