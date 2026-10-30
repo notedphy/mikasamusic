@@ -27,4 +27,6 @@ The driver and Media3 wrapper are included as local Gradle modules because they 
 
 From Android Studio, use **Build > Make Project**. The first build downloads Android/Gradle dependencies and requires the listed SDK, NDK, and CMake versions. USB DAC behavior should be verified on each target phone and DAC; it cannot be validated by an emulator alone.
 
+Release APKs use the `MIKASA_RELEASE_STORE_FILE`, `MIKASA_RELEASE_STORE_PASSWORD`, `MIKASA_RELEASE_KEY_ALIAS`, and `MIKASA_RELEASE_KEY_PASSWORD` environment variables. Keep the signing key and passwords private and back them up securely; future app updates must use the same signing key. Without these variables, Gradle does not attach a release signing key.
+
 GitHub Actions runs the debug APK build on pushes, pull requests, and manual workflow dispatch. Successful builds upload the APK as the `mikasa-debug` workflow artifact.

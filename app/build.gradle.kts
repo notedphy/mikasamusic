@@ -4,6 +4,17 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val releaseSigning = listOf(
+    providers.environmentVariable("MIKASA_RELEASE_STORE_FILE").orNull,
+    providers.environmentVariable("MIKASA_RELEASE_STORE_PASSWORD").orNull,
+    providers.environmentVariable("MIKASA_RELEASE_KEY_ALIAS").orNull,
+    providers.environmentVariable("MIKASA_RELEASE_KEY_PASSWORD").orNull
+)
+val hasReleaseSigning = releaseSigning.any { it != null }
+if (hasReleaseSigning && releaseSigning.any { it.isNullOrBlank() }) {
+    throw GradleException("Set all MIKASA_RELEASE_* signing environment variables to build a signed release.")
+}
+
 android {
     namespace = "com.anothernop.mikasa"
     compileSdk = 36
@@ -12,8 +23,8 @@ android {
         applicationId = "com.anothernop.mikasa"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1.0"
     }
 
     buildFeatures {
@@ -31,6 +42,26 @@ android {
 
     packaging {
         jniLibs.useLegacyPackaging = false
+    }
+
+    if (hasReleaseSigning) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(releaseSigning[0]!!)
+                storePassword = releaseSigning[1]!!
+                keyAlias = releaseSigning[2]!!
+                keyPassword = releaseSigning[3]!!
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
     }
 }
 
